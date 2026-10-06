@@ -26,7 +26,7 @@ The initial deployment contains no faculty records. After deployment, configure 
 
 Uploads are session-only and do not write files back to GitHub. File refresh is manual, distinct from filter updates. A new session may require re-uploading the sources. Uploaded data is processed on the hosting service; use a faculty-approved hosting arrangement for shared institutional use.
 
-Live Google Drive synchronisation and persistent shared source storage are not configured. An institution-approved authenticated Drive connection is needed for automatic shared refresh. Do not add the source records or exported dashboard snapshots to a public code repository.
+For persistent shared sources, follow [Connect private Google Drive](GOOGLE_DRIVE_SETUP.md). The app supports a dedicated read-only service account configured in Streamlit Secrets. Once access is configured, new sessions load the eleven source files from Drive automatically, and **Refresh source files** reads updates on demand. No background refresh schedule is active. This connection is not active until the key, folder ID and Viewer access are configured. Do not add source records, credential keys or exported dashboard snapshots to the code repository.
 
 ## Running the code locally
 

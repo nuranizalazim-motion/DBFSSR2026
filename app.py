@@ -11,6 +11,7 @@ import plotly.express as px
 import streamlit as st
 
 from data_pipeline import apply_filters, build_snapshot, read_sources, refresh_snapshot, safe_export
+from drive_source import read_drive_sources
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("DASHBOARD_DATA_DIR", ROOT / "data"))
@@ -45,12 +46,37 @@ h1,h2,h3 {color:#202440;} [data-testid='stMetric'] {background:white;border:1px 
 <h1>FSSR Faculty Insights</h1><p>Students, people, programmes and spaces — a shared view for faculty decisions.</p></div>""", unsafe_allow_html=True)
 
 
+try:
+    DRIVE_CONFIG = dict(st.secrets.get("google_drive", {}))
+    SECRETS_ERROR = None
+except FileNotFoundError:
+    DRIVE_CONFIG = {}
+    SECRETS_ERROR = None
+except Exception:
+    DRIVE_CONFIG = {}
+    SECRETS_ERROR = "Cannot read Streamlit Secrets. Check the TOML formatting in the app's Secrets settings."
+
+
 def load_current(replacements=None):
-    return build_snapshot(read_sources(DATA, replacements))
+    if SECRETS_ERROR:
+        raise ValueError(SECRETS_ERROR)
+    if DRIVE_CONFIG:
+        sources, drive_manifest = read_drive_sources(DRIVE_CONFIG)
+        candidate = build_snapshot(sources)
+        by_name = {item["File"]: item for item in drive_manifest}
+        for item in candidate["manifest"]:
+            item.update(by_name[item["File"]])
+        candidate["source_mode"] = "Google Drive"
+        return candidate
+    candidate = build_snapshot(read_sources(DATA, replacements))
+    candidate["source_mode"] = "Session uploads" if replacements else "Local files"
+    return candidate
 
 
-if "snapshot" not in st.session_state and DATA.is_dir():
-    refresh_snapshot(st.session_state, load_current)
+if "snapshot" not in st.session_state and "initial_read_attempted" not in st.session_state and (DRIVE_CONFIG or SECRETS_ERROR or DATA.is_dir()):
+    st.session_state["initial_read_attempted"] = True
+    with st.spinner("Reading and validating source files…"):
+        refresh_snapshot(st.session_state, load_current)
 
 with st.sidebar:
     st.markdown("### Explore your faculty")
@@ -59,32 +85,42 @@ with st.sidebar:
     st.markdown("### Source refresh")
     st.caption("Filters update immediately. Refresh rereads source files and runs validation.")
     if st.button("Refresh source files", width="stretch"):
-        refresh_snapshot(st.session_state, lambda: load_current(st.session_state.get("replacements")))
+        with st.spinner("Reading and validating source files…"):
+            refresh_snapshot(st.session_state, lambda: load_current(st.session_state.get("replacements")))
     with st.expander("Replace source files"):
-        st.caption("Upload revised files with their original filenames. Uploaded replacements apply to this session only. Originals stay unchanged.")
-        uploads = st.file_uploader("Updated Excel / PDF / PowerPoint files", type=["xlsx", "pdf", "pptx"], accept_multiple_files=True)
-        if st.button("Validate and apply uploads", disabled=not uploads):
-            replacements = dict(st.session_state.get("replacements", {}))
-            for u in uploads:
-                replacements[u.name] = u.getvalue()
-            if refresh_snapshot(st.session_state, lambda: load_current(replacements)):
-                st.session_state["replacements"] = replacements
-        if st.button("Use local source folder"):
-            if refresh_snapshot(st.session_state, load_current):
-                st.session_state.pop("replacements", None)
+        if DRIVE_CONFIG:
+            st.caption("Shared source files come from your private Google Drive folder. Update the files there, keep their original filenames, then press Refresh source files. The app has read-only access.")
+        else:
+            st.caption("Upload revised files with their original filenames. Uploaded replacements apply to this session only. Originals stay unchanged.")
+            uploads = st.file_uploader("Updated Excel / PDF / PowerPoint files", type=["xlsx", "pdf", "pptx"], accept_multiple_files=True)
+            if st.button("Validate and apply uploads", disabled=not uploads):
+                replacements = dict(st.session_state.get("replacements", {}))
+                for u in uploads:
+                    replacements[u.name] = u.getvalue()
+                if refresh_snapshot(st.session_state, lambda: load_current(replacements)):
+                    st.session_state["replacements"] = replacements
+            if st.button("Use local source folder"):
+                if refresh_snapshot(st.session_state, load_current):
+                    st.session_state.pop("replacements", None)
     stale_hours = st.number_input("Flag data after (hours since read)", min_value=1, value=24)
-    st.caption("Manual refresh is active. Google Drive sync is not connected.")
+    if DRIVE_CONFIG:
+        st.caption("Source: private Google Drive. Loads when a new session opens; use Refresh source files for updates. No background refresh schedule is active.")
+    else:
+        st.caption("Manual refresh is active. Google Drive is not connected. Permanent setup: see GOOGLE_DRIVE_SETUP.md in the GitHub repository.")
 
 if st.session_state.get("refresh_error"):
     st.error("Refresh failed: " + st.session_state["refresh_error"] + ". Showing the last successful data if available.")
 snapshot = st.session_state.get("snapshot")
 if snapshot is None:
-    st.info("This installation has no faculty data yet. Open Replace source files in the sidebar, upload all 11 original files using their original filenames, then press Validate and apply uploads.")
+    if DRIVE_CONFIG:
+        st.info("Google Drive is configured, but no source read has succeeded yet. Follow the error above, then press Refresh source files to retry.")
+    else:
+        st.info("This installation has no faculty data yet. Open Replace source files in the sidebar, upload all 11 original files using their original filenames, then press Validate and apply uploads. These uploads are temporary; connect private Google Drive to load sources again after a session restarts.")
     st.caption("For a shared website, configure private access in your hosting settings before uploading faculty records.")
     st.stop()
 loaded = datetime.fromisoformat(snapshot["loaded_at"])
 local = loaded.astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
-st.caption(f"Last successful source read: {local:%d %b %Y, %I:%M:%S %p} MYT · {len(snapshot['manifest'])} source files · Filter changes do not refresh the files")
+st.caption(f"Last successful source read: {local:%d %b %Y, %I:%M:%S %p} MYT · {len(snapshot['manifest'])} source files · Source: {snapshot.get('source_mode', 'Local files')} · Filter changes do not refresh the files")
 if (datetime.now(timezone.utc) - loaded).total_seconds() > stale_hours * 3600:
     st.warning("Stale data: the last successful source read is older than your chosen threshold.")
 st.caption("The original files do not establish one shared update date. A successful read does not prove the underlying records are current.")
@@ -245,6 +281,6 @@ with st.expander("Data quality and source validation"):
 with st.expander("Help · updating and sharing"):
     st.markdown("""**Updating:** replace files in the local `data` folder using the same filenames, then press **Refresh source files**. Or apply revised files in **Replace source files** for this session. Filter selections stay active; use **Reset filters** if you want to start over.
 
-**Google Drive:** this prototype reads supplied files, not the live Drive folder. Download changed files from Drive and replace them here. Automatic Drive refresh needs a separately configured authenticated connection and a running host; see the maintenance guide.
+**Google Drive:** with the private connection configured, new sessions read the shared Drive folder automatically. **Refresh source files** rereads it and validates all eleven files while preserving active filters and the current session's last successful data on failure. There is no background refresh schedule. Setup instructions are in **GOOGLE_DRIVE_SETUP.md** in the GitHub repository. Without this connection, browser uploads are temporary and local data folders are read manually.
 
 **Sharing:** the local prototype has no login or management/lecturer access roles. Use an institution-managed host with authentication before granting shared access. Full setup and maintenance instructions are in `docs/BEGINNER_GUIDE.md`.""")

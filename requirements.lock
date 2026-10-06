@@ -1,13 +1,14 @@
 altair==5.5.0
 attrs==26.1.0
 blinker==1.9.0
-cachetools==6.2.6
+cachetools==5.5.2
 certifi==2026.7.22
 charset-normalizer==3.5.2
 click==8.5.0
 et_xmlfile==2.0.0
 gitdb==4.0.12
 GitPython==3.2.0
+google-auth==2.40.3
 idna==3.20
 iniconfig==2.3.0
 Jinja2==3.1.6
@@ -25,6 +26,8 @@ plotly==6.3.1
 pluggy==1.6.0
 protobuf==6.33.6
 pyarrow==25.0.1
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
 pydeck==0.9.3
 Pygments==2.21.0
 pypdf==6.1.1
@@ -35,6 +38,7 @@ pytz==2026.5
 referencing==0.37.0
 requests==2.34.2
 rpds-py==2026.9.1
+rsa==4.9.1
 six==1.17.0
 smmap==5.0.3
 streamlit==1.50.0
